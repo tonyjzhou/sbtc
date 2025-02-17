@@ -34,7 +34,7 @@ x-common-vars:
 # ------------------------------------------------------------------------------
 x-postgres: &postgres
   image: postgres:16.6-bookworm@sha256:c965017e1d29eb03e18a11abc25f5e3cd78cb5ac799d495922264b8489d5a3a1
-  stop_grace_period: 5s
+  stop_grace_period: 30s
   environment:
     POSTGRES_USER: postgres
     POSTGRES_PASSWORD: postgres
@@ -251,6 +251,7 @@ services:
       - "28332:28332"
     volumes:
       - ./bitcoin/bitcoin.conf:/root/.bitcoin/bitcoin.conf
+      - bitcoin_data:/root/.bitcoin
     entrypoint:
       - /bin/bash
       - -c
@@ -260,6 +261,11 @@ services:
     profiles:
       - default
       - bitcoin-mempool
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-rpcconnect=bitcoin", "getblockchaininfo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   bitcoin-miner:
     build: bitcoin
@@ -267,12 +273,13 @@ services:
       - bitcoin
     volumes:
       - ./bitcoin/bitcoin.conf:/root/.bitcoin/bitcoin.conf
+      - bitcoin_data:/root/.bitcoin
     environment:
       BTC_ADDR: *BTC_ADDR
       MINE_INTERVAL: *MINE_INTERVAL
       MINE_INTERVAL_EPOCH3: *MINE_INTERVAL_EPOCH3
       MINE_INTERVAL_EPOCH25: *MINE_INTERVAL_EPOCH25
-      INIT_BLOCKS: 101
+      INIT_BLOCKS: 220
       STACKS_30_HEIGHT: *STACKS_30_HEIGHT
       STACKS_25_HEIGHT: *STACKS_25_HEIGHT
     entrypoint:
@@ -283,8 +290,20 @@ services:
         trap "exit" INT TERM
         trap "kill 0" EXIT
         bitcoin-cli -rpcconnect=bitcoin -rpcwait getmininginfo
-        bitcoin-cli -rpcconnect=bitcoin -named createwallet wallet_name=main descriptors=false
-        bitcoin-cli -rpcconnect=bitcoin -named createwallet wallet_name=depositor descriptors=true
+        # Try to load or create main wallet
+        if ! bitcoin-cli -rpcconnect=bitcoin loadwallet main 2>/dev/null; then
+          if ! bitcoin-cli -rpcconnect=bitcoin -named createwallet wallet_name=main descriptors=false; then
+            echo "Failed to create or load main wallet"
+            exit 1
+          fi
+        fi
+        # Try to load or create depositor wallet
+        if ! bitcoin-cli -rpcconnect=bitcoin loadwallet depositor 2>/dev/null; then
+          if ! bitcoin-cli -rpcconnect=bitcoin -named createwallet wallet_name=depositor descriptors=true; then
+            echo "Failed to create or load depositor wallet"
+            exit 1
+          fi
+        fi
         bitcoin-cli -rpcwallet=main -rpcconnect=bitcoin importaddress $${BTC_ADDR} "" false
         bitcoin-cli -rpcwallet=main -rpcconnect=bitcoin generatetoaddress $${INIT_BLOCKS} $${BTC_ADDR}
         ADDR=$$(bitcoin-cli -rpcwallet=depositor -rpcconnect=bitcoin getnewaddress label="" bech32)
@@ -335,6 +354,7 @@ services:
     volumes:
       - ./stacks/stacks-regtest-miner.toml:/data/config.toml.in
       - ./bitcoin/bitcoin.conf:/root/.bitcoin/bitcoin.conf
+      - stacks_data:/data  # Add this line
     environment:
       # STACKS_LOG_TRACE: 1 # uncomment for trace logging
       # STACKS_LOG_DEBUG: 1
@@ -370,6 +390,11 @@ services:
       - default
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:20443/v2/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   stacker:
     build: stacker
@@ -610,3 +635,7 @@ services:
     command: "./wait-for-it.sh mariadb:3306 --timeout=720 --strict -- ./start.sh"
     profiles:
       - bitcoin-mempool
+
+volumes:
+  bitcoin_data:
+  stacks_data:

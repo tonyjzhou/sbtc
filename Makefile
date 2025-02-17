@@ -126,7 +126,7 @@ devenv-up:
 	docker compose -f docker/docker-compose.yml --profile default --profile bitcoin-mempool --profile sbtc-signer up -d
 
 devenv-down:
-	docker compose -f docker/docker-compose.yml --profile default --profile bitcoin-mempool --profile sbtc-signer down -t 0 -v
+	docker compose -f docker/docker-compose.yml --profile default --profile bitcoin-mempool --profile sbtc-signer down -t 0
 
 devenv-sbtc-up:
 	docker compose -f docker/docker-compose.yml --profile sbtc-signer up --build -d
